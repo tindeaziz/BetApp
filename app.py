@@ -16,7 +16,7 @@ from dotenv import load_dotenv
 # Ensure project root is in path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from src.database import get_todays_matches, ingest_upcoming_fixtures
+from src.database import get_todays_matches, ingest_upcoming_fixtures, get_cached_prediction
 from src.prediction import load_models, run_prediction
 from src.templates import (
     HERO_TEMPLATE, 
@@ -218,14 +218,27 @@ def render_analytics_dashboard(match, models):
     # Run Prediction
     with st.spinner("Running Ensemble Models..."):
         try:
-            pred = run_prediction(
-                match['home'], match['away'],
-                models=models,
-                referee=match.get('referee'),
-                league=match.get('league'),
-                league_id=match.get('league_id'),
-                match_date=match.get('match_date')
-            )
+            from src.database import get_cached_prediction, save_prediction_cache
+            
+            # Check cache first
+            cached = get_cached_prediction(match['id'])
+            if cached:
+                pred = cached
+            else:
+                pred = run_prediction(
+                    match['home'], match['away'],
+                    models=models,
+                    referee=match.get('referee'),
+                    league=match.get('league'),
+                    league_id=match.get('league_id'),
+                    match_date=match.get('match_date')
+                )
+                # Save to cache for next time
+                try:
+                    save_prediction_cache(match['id'], pred)
+                except Exception as e:
+                    print(f"Cache miss save failed: {e}")
+
             
             # 1. MAIN PREDICTION CARD
             cls = pred['predicted_result']
