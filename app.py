@@ -224,6 +224,27 @@ def render_analytics_dashboard(match, models):
             cached = get_cached_prediction(match['id'])
             if cached:
                 pred = cached
+                
+                # FALLBACK: If 'features' missing in cache (e.g. from old DB schema), calculate them now
+                if 'features' not in pred:
+                    from src.prediction import get_feature_engineer, generate_ai_explanation
+                    fe = get_feature_engineer()
+                    f_df = fe.create_match_features(
+                        match['home'], match['away'], 
+                        match.get('referee'),
+                        league=match.get('league'), 
+                        league_id=match.get('league_id'),
+                        match_date=match.get('match_date')
+                    )
+                    pred['features'] = f_df.iloc[0].to_dict()
+                    
+                    # Also regenerate explanation if missing
+                    if 'explanation' not in pred:
+                        pred['explanation'] = generate_ai_explanation(
+                            match['home'], match['away'],
+                            pred['prob_home'], pred['prob_away'],
+                            pred['features']
+                        )
             else:
                 pred = run_prediction(
                     match['home'], match['away'],
