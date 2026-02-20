@@ -303,7 +303,35 @@ def render_analytics_dashboard(match, models):
                 st.markdown('</div>', unsafe_allow_html=True)
             
 
+            # ──────────────────────────────────────────────
+            # NEW: VALUE BET FINDER
+            # ──────────────────────────────────────────────
+            st.markdown("<br>", unsafe_allow_html=True)
+            st.markdown("### 💎 Value Bet Finder")
+            
+            vb_col1, vb_col2, vb_col3 = st.columns([1, 1, 1], vertical_alignment="center")
+            with vb_col1:
+                st.caption(f"Odds for: **{outcome_text}**")
+                bookie_odds = st.number_input("Enter Bookmaker Odds", min_value=1.01, value=2.00, step=0.05, key=f"odds_{match['id']}")
+            
+            with vb_col2:
+                ai_prob = pred['confidence']
+                edge = (ai_prob * bookie_odds) - 1.0
+                
+                if edge > 0.05:
+                    st.markdown(f"<div style='padding: 12px; border-radius: 8px; background: #dcfce7; border: 1px solid #22c55e; color: #166534; text-align: center; font-weight: bold;'>✅ VALUE BET DETECTED<br>Edge: +{(edge*100):.1f}%</div>", unsafe_allow_html=True)
+                elif edge > 0:
+                    st.markdown(f"<div style='padding: 12px; border-radius: 8px; background: #fef9c3; border: 1px solid #eab308; color: #854d0e; text-align: center; font-weight: bold;'>⚠️ SLIGHT EDGE<br>Edge: +{(edge*100):.1f}%</div>", unsafe_allow_html=True)
+                else:
+                    st.markdown(f"<div style='padding: 12px; border-radius: 8px; background: #fee2e2; border: 1px solid #ef4444; color: #991b1b; text-align: center; font-weight: bold;'>❌ NO VALUE (Avoid)<br>Edge: {(edge*100):.1f}%</div>", unsafe_allow_html=True)
+                    
+            with vb_col3:
+                true_odds = 1 / ai_prob if ai_prob > 0 else 0
+                st.markdown(f"<div style='text-align: center; padding: 12px; background: #f8fafc; border: 1px dashed #cbd5e1; border-radius: 8px;'><span style='color: #64748b; font-size: 0.8rem; text-transform: uppercase;'>AI True Odds</span><br><span style='font-size: 1.5rem; font-weight: 800; color: #0f172a;'>{true_odds:.2f}</span></div>", unsafe_allow_html=True)
+
+            # ──────────────────────────────────────────────
             # DOUBLE CHANCE
+            st.markdown("<br>", unsafe_allow_html=True)
             st.markdown("### 🛡️ Double Chance")
             dc1, dc2, dc3 = st.columns(3)
             with dc1:
@@ -426,18 +454,46 @@ def render_analytics_dashboard(match, models):
             if 'explanation' in pred:
                 st.markdown(AI_INSIGHT_TEMPLATE.format(analysis=pred['explanation']), unsafe_allow_html=True)
 
+            # ──────────────────────────────────────────────
+            # NEW: MATCH CONTEXT (FATIGUE)
+            # ──────────────────────────────────────────────
+            h_rest = feats.get('home_rest_days', 7.0)
+            a_rest = feats.get('away_rest_days', 7.0)
+            
+            if h_rest < 4.0 or a_rest < 4.0:
+                st.markdown("<br>", unsafe_allow_html=True)
+                st.markdown("### 🏃‍♂️ Fatigue Warning")
+                fc1, fc2 = st.columns(2)
+                
+                with fc1:
+                    bg = "#fee2e2" if h_rest < 4.0 else "#f8fafc"
+                    col = "#dc2626" if h_rest < 4.0 else "#64748b"
+                    st.markdown(f"<div style='padding:12px; border-radius:8px; background:{bg}; border:1px solid {col}33; text-align:center;'><span style='color:{col}; font-weight:bold;'>{match['home']}</span><br><span style='font-size:1.2rem; font-weight:900;'>{h_rest:.1f} Days Rest</span></div>", unsafe_allow_html=True)
+                
+                with fc2:
+                    bg = "#fee2e2" if a_rest < 4.0 else "#f8fafc"
+                    col = "#dc2626" if a_rest < 4.0 else "#64748b"
+                    st.markdown(f"<div style='padding:12px; border-radius:8px; background:{bg}; border:1px solid {col}33; text-align:center;'><span style='color:{col}; font-weight:bold;'>{match['away']}</span><br><span style='font-size:1.2rem; font-weight:900;'>{a_rest:.1f} Days Rest</span></div>", unsafe_allow_html=True)
+
             # COMPARISON BARS
             st.markdown('<div style="margin-top: 10px; margin-bottom: 20px;">', unsafe_allow_html=True)
             
-            # 1. Form
+            # 1. Form & Momentum
             h_form = feats.get('home_form', 0.5) * 100
             a_form = feats.get('away_form', 0.5) * 100
-            f_tot = h_form + a_form if (h_form + a_form) > 0 else 1
+            
+            def form_boxes(f_val):
+                if f_val > 80: return "🟩 🟩 🟩 🟩 🟩"
+                elif f_val > 60: return "🟩 🟩 🟩 ⬜ ⬜"
+                elif f_val > 40: return "🟩 🟩 ⬜ 🟥 🟥"
+                elif f_val > 20: return "🟩 ⬜ 🟥 🟥 🟥"
+                return "🟥 🟥 🟥 🟥 🟥"
+                
             st.markdown(COMPARISON_BAR_TEMPLATE.format(
-                left_val=f"{h_form:.0f}%", 
-                title="RECENT FORM", 
-                right_val=f"{a_form:.0f}%", 
-                left_pct=(h_form/f_tot)*100, right_pct=(a_form/f_tot)*100
+                left_val=f"{h_form:.0f}%<br><span style='font-size:0.7rem'>{form_boxes(h_form)}</span>", 
+                title="MOMENTUM & FORM", 
+                right_val=f"{a_form:.0f}%<br><span style='font-size:0.7rem'>{form_boxes(a_form)}</span>", 
+                left_pct=(h_form/200)*100 + 25, right_pct=(a_form/200)*100 + 25 # Scale adjusting
             ), unsafe_allow_html=True)
             
             # 2. Attack

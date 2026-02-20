@@ -23,8 +23,9 @@ FEATURE_COLUMNS = [
     'home_elo', 'away_elo',
     'home_attack_strength', 'away_defense_strength',
     'is_derby',
-    # Competition features
-    'competition_type', 'is_knockout'
+    'competition_type', 'is_knockout',
+    'home_xg_rolling', 'away_xg_rolling', 'xg_diff',
+    'home_rest_days', 'away_rest_days', 'rest_diff'
 ]
 
 def load_models():

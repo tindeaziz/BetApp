@@ -198,7 +198,7 @@ class FeatureEngineer:
         if not stats_df.empty:
             # We assume stats_df has 'match_id' and 'team'
             # Select relevant advanced stats
-            adv_stats_cols = ['match_id', 'team', 'shots_on_target', 'corner_kicks', 'total_shots', 'fouls', 'yellow_cards']
+            adv_stats_cols = ['match_id', 'team', 'shots_on_target', 'corner_kicks', 'total_shots', 'fouls', 'yellow_cards', 'expected_goals']
             # Ensure columns exist
             available_cols = [c for c in adv_stats_cols if c in stats_df.columns]
             stats_subset = stats_df[available_cols]
@@ -210,10 +210,14 @@ class FeatureEngineer:
             for col in fillna_cols:
                 if col in double_df.columns:
                     double_df[col] = double_df[col].fillna(0)
+            
+            if 'expected_goals' in double_df.columns:
+                double_df['expected_goals'] = double_df['expected_goals'].fillna(double_df['goals_scored'] * 0.9 + 0.1)
         else:
             # Initialize with 0 if no stats
             for col in ['shots_on_target', 'corner_kicks', 'total_shots', 'fouls', 'yellow_cards']:
                 double_df[col] = 0
+            double_df['expected_goals'] = double_df['goals_scored'] * 0.9 + 0.1
 
         # Encode Result (Win/Draw/Loss from team perspective)
         # result_raw is 'H' (Home Win), 'A' (Away Win), 'D' (Draw)
@@ -247,7 +251,7 @@ class FeatureEngineer:
         
         # Metrics to aggregate
         metrics = ['goals_scored', 'goals_conceded', 'points', 
-                   'shots_on_target', 'corner_kicks', 'yellow_cards']
+                   'shots_on_target', 'corner_kicks', 'yellow_cards', 'expected_goals']
         
         # Available metrics
         available_metrics = [m for m in metrics if m in df.columns]
@@ -270,6 +274,10 @@ class FeatureEngineer:
         # Specific Form Calculation (Points / 3)
         if 'points_rolling_avg' in df.columns:
             df['form_score'] = df['points_rolling_avg'] / 3.0
+            
+        # Calculate rest days
+        df['rest_days'] = df.groupby('team')['match_date'].diff().dt.days
+        df['rest_days'] = df['rest_days'].fillna(7.0).clip(upper=21.0) # Cap at 21 days for long breaks
         
         return df
 
@@ -504,7 +512,9 @@ class FeatureEngineer:
             'h2h_count': 'h2h_count',
             'result_raw': 'result',
             'goals_scored': 'home_actual_goals',
-            'fouls': 'home_fouls'
+            'fouls': 'home_fouls',
+            'expected_goals_rolling_avg': 'home_xg_rolling',
+            'rest_days': 'home_rest_days'
         }
         
         home_subset = home_df[list(cols_map.keys()) + ['match_id', 'match_date', 'referee', 'league']].rename(columns=cols_map)
@@ -523,7 +533,9 @@ class FeatureEngineer:
             'goals_conceded_rolling_avg': 'away_defensive',
             'goals_scored': 'away_actual_goals',
             'h2h_home_wins': 'h2h_away_wins', # Mapping team's win rate to 'away_wins' feature
-            'fouls': 'away_fouls'
+            'fouls': 'away_fouls',
+            'expected_goals_rolling_avg': 'away_xg_rolling',
+            'rest_days': 'away_rest_days'
         }
         
         away_subset = away_df[list(away_cols_map.keys()) + ['match_id']].rename(columns=away_cols_map)
@@ -535,6 +547,8 @@ class FeatureEngineer:
         full['offensive_diff'] = full['home_offensive'] - full['away_offensive']
         full['defensive_diff'] = full['home_defensive'] - full['away_defensive']
         full['form_diff'] = full['home_form'] - full['away_form']
+        full['xg_diff'] = full['home_xg_rolling'] - full['away_xg_rolling']
+        full['rest_diff'] = full['home_rest_days'] - full['away_rest_days']
         full['home_advantage'] = 1.0
         
         # Derby & Ref
@@ -558,7 +572,9 @@ class FeatureEngineer:
             'referee_aggression', 'home_advantage',
             'home_elo', 'away_elo',
             'home_attack_strength', 'away_defense_strength',
-            'is_derby', 'competition_type', 'is_knockout'
+            'is_derby', 'competition_type', 'is_knockout',
+            'home_xg_rolling', 'away_xg_rolling', 'xg_diff',
+            'home_rest_days', 'away_rest_days', 'rest_diff'
         ]
         
         # Ensure 'away_defense_strength' exists (we have away_defensive_strength)
@@ -669,10 +685,7 @@ class FeatureEngineer:
         
         feats['h2h_home_wins'] = home_row.get('h2h_home_wins', 0)
         feats['h2h_draws'] = home_row.get('h2h_draws', 0)
-        feats['h2h_away_wins'] = home_row.get('h2h_away_wins', 0) # Correction: from home perspective?
-        # Accessing h2h from home_row perspective:
-        # h2h_home_wins in home_row means 'wins for team (home)'.
-        feats['h2h_count'] = home_row.get('h2h_count', 0)
+        feats['h2h_away_wins'] = home_row.get('h2h_away_wins', 0)
         feats['h2h_avg_goals'] = 2.5 # Placeholder
         
         feats['referee_aggression'] = self.calculate_referee_aggression(referee or 'Unknown')
@@ -687,6 +700,15 @@ class FeatureEngineer:
         feats['is_derby'] = 1.0 if self.detect_derby(home_team, away_team) else 0.0
         feats['competition_type'] = 1.0 if self.detect_competition_type(league) == 'CUP' else 0.0
         feats['is_knockout'] = 0.0
+        
+        # New Advanced Features (xG and Fatigue)
+        feats['home_xg_rolling'] = home_row.get('expected_goals_rolling_avg', 1.0)
+        feats['away_xg_rolling'] = away_row.get('expected_goals_rolling_avg', 1.0)
+        feats['xg_diff'] = feats['home_xg_rolling'] - feats['away_xg_rolling']
+        
+        feats['home_rest_days'] = home_row.get('rest_days', 7.0)
+        feats['away_rest_days'] = away_row.get('rest_days', 7.0)
+        feats['rest_diff'] = feats['home_rest_days'] - feats['away_rest_days']
         
         # Add h2h_count explicitly if needed by app
         
